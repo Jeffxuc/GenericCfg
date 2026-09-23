@@ -78,4 +78,116 @@ function tree-cn {
     [Console]::OutputEncoding = $old
 }
 
+# 获取指定路径下的目录大小，默认当前目录，可自行指定目录，-Top 10 只显示前10个
+function getDirSize {
+    param(
+        [Parameter(Position = 0)]
+        [string]$Path = ".",
+
+        [Parameter()]
+        [ValidateRange(0, [int]::MaxValue)]
+        [int]$Top = 0
+    )
+
+    # 获取绝对路径
+    try {
+        $root = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    }
+    catch {
+        Write-Error "路径不存在或无法访问: $Path"
+        return
+    }
+
+    # 获取当前目录第一层目录
+    $topDirs = Get-ChildItem `
+        -LiteralPath $root `
+        -Directory `
+        -Force `
+        -ErrorAction SilentlyContinue
+
+    if (-not $topDirs) {
+        Write-Host "当前目录没有子目录: $root"
+        return
+    }
+
+    # 初始化每个第一层目录的大小
+    $sizes = @{}
+
+    foreach ($dir in $topDirs) {
+        $sizes[$dir.Name] = [int64]0
+    }
+
+    # 整个目录树只递归扫描一次
+    Get-ChildItem `
+        -LiteralPath $root `
+        -File `
+        -Recurse `
+        -Force `
+        -ErrorAction SilentlyContinue |
+    ForEach-Object {
+
+        # 获取相对于根目录的路径
+        $relativePath = [System.IO.Path]::GetRelativePath(
+            $root,
+            $_.FullName
+        )
+
+        # Windows 路径分隔符
+        $separator = [System.IO.Path]::DirectorySeparatorChar
+
+        # 获取第一层目录名称
+        $parts = $relativePath.Split($separator, 2)
+
+        if ($parts.Count -ge 2) {
+            $topDirName = $parts[0]
+
+            if ($sizes.ContainsKey($topDirName)) {
+                $sizes[$topDirName] += $_.Length
+            }
+        }
+    }
+
+    # 生成结果
+    $result = foreach ($dir in $topDirs) {
+
+        $size = $sizes[$dir.Name]
+
+        # 自动选择合适的单位
+        if ($size -ge 1TB) {
+            $displaySize = "{0:N2} TB" -f ($size / 1TB)
+        }
+        elseif ($size -ge 1GB) {
+            $displaySize = "{0:N2} GB" -f ($size / 1GB)
+        }
+        elseif ($size -ge 1MB) {
+            $displaySize = "{0:N2} MB" -f ($size / 1MB)
+        }
+        elseif ($size -ge 1KB) {
+            $displaySize = "{0:N2} KB" -f ($size / 1KB)
+        }
+        else {
+            $displaySize = "{0:N0} B" -f $size
+        }
+
+        [PSCustomObject]@{
+            Name      = $dir.Name
+            Size      = $displaySize
+            SizeBytes = $size
+        }
+    }
+
+    # 按实际字节数从大到小排序
+    $result = $result |
+        Sort-Object SizeBytes -Descending
+
+    # -Top 大于 0 时，只取前 N 个
+    if ($Top -gt 0) {
+        $result = $result | Select-Object -First $Top
+    }
+
+    # 输出结果
+    $result |
+        Format-Table Name, Size -AutoSize
+}
+
 
